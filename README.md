@@ -1,8 +1,7 @@
 # TYoung_Portfolio
 Data science portfolio
 
-```text
-       
+    
               .-                           =-.    ...
              ..                              .++  . .=.
          .= ..                                 .+..=..=.
@@ -39,4 +38,3 @@ Data science portfolio
                           .. .***
                               =#.
                                .
-```
