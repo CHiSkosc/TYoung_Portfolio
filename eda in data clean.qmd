@@ -1,0 +1,169 @@
+---
+  title: "EDA work_1"
+format: 
+  html:
+  toc: true
+toc-depth: 3
+toc-location: left
+toc-title: "Contents"
+embed-resources: true
+execute:
+  include: true
+eval: true    
+warning: false
+message: false
+---
+
+# Intro
+
+
+This file is to review part of the data provided by Swire 
+
+# Libraries and intial data loading
+
+## Libraries
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(skimr)
+library(janitor)
+```
+
+## Data Loading
+
+Here are the datasets I'll be reviewing in this EDA workbook
+
+### Material data and overview
+
+```{r data loaded and copied}
+o_material <- read_csv("/Masters/Fall 2025/IS6813 Capstone 3/data/material.csv")
+material <- o_material #copied
+
+summary(material)
+```
+
+Distinct counting
+
+```{r material distinct count}
+#unique count of material_id
+n_distinct(material$MATERIAL_ID)
+```
+
+All objects listed in material are distinct.
+
+Updating the MATERIAL_ID to numeric and factoring other columns for analysis
+
+```{r}
+#updating column to numeric
+material <- material %>%
+  mutate(MATERIAL_ID = as.numeric(MATERIAL_ID))
+
+#Factoring other columns for analysis
+material <- material %>%
+  mutate(across(c(PACK_TYPE_DESC, TRADE_MARK_DESC, FLAVOUR_DESC, PACK_SIZE_DESC, BEV_CAT_DESC), 
+                as.factor))
+```
+
+#### Missing data
+
+```{r material missing data}
+# Filter rows with any NA, show all columns
+material %>%
+  filter(if_any(everything(), is.na)) %>%
+  arrange(PACK_TYPE_DESC, TRADE_MARK_DESC, PACK_TYPE_DESC) 
+
+# results has 134 missing, only in Bev_CAT_ DESC. the trade_mark_desc and flavor_desc only has 1 variable for each column Sunny Sip and Passionfruit (respectfully) that match the NA
+```
+
+#### Small analysis
+
+Reviewing the common combinations, not considering the MATERIAL_ID, as this is unique for all of the data in the set
+
+```{r material common combo}
+# Grouping for most common combinations in the data set, not considering the material_id
+mat_combo_count <- material %>%
+  count(PACK_TYPE_DESC, TRADE_MARK_DESC, FLAVOUR_DESC, PACK_SIZE_DESC, BEV_CAT_DESC)
+
+# arranging the order to most common duplicates (n > 1)
+material %>%
+  count(PACK_TYPE_DESC, TRADE_MARK_DESC, FLAVOUR_DESC, PACK_SIZE_DESC, BEV_CAT_DESC) %>%
+  filter(n >1 ) %>%
+  arrange(desc(n))
+```
+
+### Google Analytics data
+
+```{r google analytics data loading and summary}
+o_data_google <- read_csv("/Masters/Fall 2025/IS6813 Capstone 3/data/google_analytics.csv")
+
+google_analyc <- o_data_google
+
+summary(google_analyc)
+```
+
+No NAs are shoing in Google Analytics file.
+
+#### Cleaning- Google_Analytics
+
+```{r}
+# Cleaning the customer id
+google_analyc <- google_analyc %>%
+  mutate(CUSTOMER_ID = as.numeric(CUSTOMER_ID))
+
+#factoring other columns (not the ID)
+google_analyc <- google_analyc %>%
+  mutate(across(c(EVENT_NAME, DEVICE_CATEGORY, DEVICE_MOBILE_BRAND_NAME, DEVICE_OPERATING_SYSTEM, EVENT_PAGE_NAME, EVENT_PAGE_TITLE), as.factor)) #not factoring ITEMS column as they're set up as a json format, could loose data
+
+
+```
+
+### Orders data
+
+```{r google analytics data loading and summary}
+o_orders <- read_csv("/Masters/Fall 2025/IS6813 Capstone 3/data/orders.csv")
+
+orders <- o_orders
+
+summary(orders)
+```
+
+Cleaning
+
+```{r}
+# numeric for the Customer_id and material_id
+orders <- orders %>%
+  mutate(CUSTOMER_ID = as.numeric(CUSTOMER_ID), 
+         MATERIAL_ID = as.numeric(MATERIAL_ID), 
+         ORDER_TYPE = as.factor(ORDER_TYPE), 
+         PLANT_ID = as.factor(PLANT_ID))
+
+```
+
+### Sales data
+
+```{r sales loading and summary}
+o_sales <- read_csv("data/sales.csv")
+
+sales <- o_sales
+
+summary(sales)
+
+```
+
+Cleaning
+
+```{r sales cleaning}
+sales <- sales %>%
+  mutate(CUSTOMER_ID = as.numeric(CUSTOMER_ID), 
+         MATERIAL_ID = as.numeric(MATERIAL_ID), 
+         GROSS_PROFIT_DEAD_NET = as.numeric(GROSS_PROFIT_DEAD_NET))
+
+summary(sales)
+```
+
+```{r}
+#updating Posting_date to a date format
+sales$POSTING_DATE <- as.Date(sales$POSTING_DATE, format = "%m/%d/%Y")
+```
