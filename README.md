@@ -1,10 +1,7 @@
 # TYoung_Portfolio
 Data science portfolio
 
-display_banner() {
-  # Red for the bird
-  tput setaf 1
-  cat <<'BIRD'
+```text
        
               .-                           =-.    ...
              ..                              .++  . .=.
@@ -42,4 +39,4 @@ display_banner() {
                           .. .***
                               =#.
                                .
-BIRD
+```
