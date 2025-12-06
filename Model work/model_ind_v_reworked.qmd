@@ -1,0 +1,1092 @@
+---
+title: "model_ind_v4"
+author: "Tina Young"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    toc-title: "Contents"
+    embed-resources: true
+execute:
+  include: true
+  eval: true    
+  warning: false
+  message: false
+---
+
+# libraries
+```{r message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(gt)
+library(CausalImpact)
+library(zoo)
+library(lubridate)
+```
+
+# Data
+```{r}
+data <- read.csv("IS 6813 Final Output for Modeling.csv")
+
+#copy
+clean_data <- data
+```
+
+```{r}
+summary(clean_data)
+```
+
+
+
+## Quick review of data
+
+```{r}
+str(data$EVENT_TIMESTAMP)
+
+unique(data$EVENT_NAME)
+
+```
+
+## Data clean up
+
+Normalizing date/timestamp fields
+```{r}
+# working on only the date and timestamps right now
+ 
+clean_data <- data %>%
+  mutate(transaction_date_df2 = ymd_hms(transaction_date_df2), 
+         event_date_df1 = as.Date(event_date_df1))
+
+# EVENT_TIMESTAMP to incorporate the date and time stamps with the NA from the other method of cart purchases
+#Step 1
+#Preserving raw data
+clean_data <- clean_data %>%
+  mutate(EVENT_TIMESTAMP_RAW = EVENT_TIMESTAMP)
+
+#Parsing from raw column
+clean_data <- clean_data %>%
+  mutate(EVENT_TIMESTAMP = as.POSIXct(EVENT_TIMESTAMP_RAW,
+                                      format = "%Y-%m-%dT%H:%M:%OSZ",
+                                      tz = "UTC"))
+
+
+
+clean_data$EVENT_TIMESTAMP <- as.POSIXct(
+  clean_data$EVENT_TIMESTAMP,
+  format = "%Y-%m-%dT%H:%M:%OSZ",
+  tz = "UTC"
+)
+
+#Step 2
+clean_data$EVENT_TIMESTAMP <- parse_date_time(
+  clean_data$EVENT_TIMESTAMP,
+  orders = "YmdHMS",
+  tz = "UTC"
+)
+
+#Step 3
+clean_data <- clean_data %>%
+  mutate(EVENT_TIMESTAMP = gsub("T", " ", EVENT_TIMESTAMP),
+         EVENT_TIMESTAMP = gsub("Z", "", EVENT_TIMESTAMP),
+         EVENT_TIMESTAMP = sub("\\.[0-9]+", "", EVENT_TIMESTAMP),
+         EVENT_TIMESTAMP = ymd_hms(EVENT_TIMESTAMP, tz = "UTC"))
+
+
+
+
+```
+
+
+clean_data <- clean_data %>%
+  mutate(
+    EVENT_TIMESTAMP = if_else(
+      grepl("^\\d{4}-\\d{2}-\\d{2}T", EVENT_TIMESTAMP),
+      EVENT_TIMESTAMP,
+      NA_character_
+    ),
+    EVENT_TIMESTAMP = ymd_hms(EVENT_TIMESTAMP)
+  )
+
+
+
+
+
+## Modeling prep
+
+* creating a weekday column in preparation to call
+```{r}
+# transaction_date_df2 as the deadline timestamp
+model_data <- clean_data %>%
+  mutate(weekday = wday(transaction_date_df2, label = TRUE))
+
+# calculating abandonment rate by weekday using made_a_purchase
+model_data %>%
+  group_by(weekday) %>%
+  summarise(
+    total = n(), 
+    abandoned = sum(made_a_purchase == 0, na.rm = TRUE), 
+    rate = abandoned / total
+  ) %>%
+  ggplot(aes(x = weekday, y = rate)) +
+  geom_col(fill = "#FF6F61") +
+  labs(title = "Cart abandonment Rate by weekday", 
+       y = "Abandonment Rate", 
+       x = "Weekday") +
+  theme_minimal()
+```
+
+
+Cart abandonment by hour
+```{r}
+# for just the hours for the below columns
+model_data <- model_data %>%
+  mutate(deadline_hour = hour(event_date_df1), 
+         event_hour = hour(EVENT_TIMESTAMP),
+         time_gap = deadline_hour - event_hour)
+
+# filtering for only the abandoned carts
+abandoned_data <- model_data %>%
+  filter(made_a_purchase == 0, !is.na(event_hour))
+
+#Summarize abandonment count by hour
+abandoned_by_hour <- abandoned_data %>%
+  group_by(event_hour) %>%
+  summarise(abandoned = n())
+
+# plot
+ggplot(abandoned_by_hour, aes(x = event_hour, y = abandoned)) +
+  geom_line(color = "blue", linewidth = 1.2) +
+  labs(title = "Abandoned Carts by Hour of Day", 
+       x = "Hour", 
+       y = "Count of Abandoned Carts") +
+  theme_minimal()
+```
+
+
+## Success Metric 1
+
+Reduce Abandonment Rate: Achieve a 10% reduction in cart abandonment rate within the first 6 months of implementation
+
+Assuming that an email/SMS/or sales rep call campaign can be started to help reduce the cart abandonment 
+
+```{r}
+#Calculate baseline Metrics
+total_event <- nrow(model_data)
+total_abandoned <- sum(model_data$made_a_purchase == 0, na.rm = TRUE)
+total_purchased <- sum(model_data$made_a_purchase == 1, na.rm = TRUE)
+
+baseline_rate <- total_purchased/total_event
+```
+
+
+```{r}
+# Simulating the intervention success 
+
+conversion_rate <- 0.10
+recovered_orders <- total_abandoned * conversion_rate
+
+new_purchased <- total_purchased + recovered_orders
+new_conversion_rate <- new_purchased /total_event
+improvement_pct <- (new_conversion_rate - baseline_rate) / baseline_rate * 100
+```
+
+```{r}
+cat("Baseline conversion rate:", round(baseline_rate, 4), "\n")
+cat("Recovered orders:", round(recovered_orders), "\n")
+cat("New conversion rate:", round(new_conversion_rate, 4), "\n")
+cat("Estimated improvement:", round(improvement_pct, 2), "%\n")
+
+```
+
+
+```{r}
+model_data %>%
+  filter(made_a_purchase == 0) %>%
+  group_by(event_hour) %>%
+  summarise(abandoned = n(),
+            recovered = abandoned * 0.10)
+
+```
+
+
+```{r}
+# combining hour and weekday
+# grouping by weekday and hour
+abandoned_by_time <- abandoned_data %>%
+  group_by(weekday, event_hour) %>%
+  summarise(abandoned = n(), .groups = "drop")
+
+#simulating 10% recovery
+abandoned_by_time <- abandoned_by_time %>%
+  filter( abandoned >= 10) %>% 
+  mutate(recovered = round(abandoned * 0.10))
+
+# aggregate total recovered
+total_recovered <<- sum(abandoned_by_time$recovered)
+
+# recalculate conversion rate
+total_event <- nrow(model_data)
+total_purchased <- sum(model_data$made_a_purchase == 1, na.rm = TRUE)
+new_purchased <- total_purchased + total_recovered
+new_conversation_rate <- new_purchased / total_event
+baseline_rate <- total_purchased/total_event
+improvement_pct <-(new_conversation_rate - baseline_rate)/baseline_rate * 100
+
+#output
+cat("Total recovered orders:", total_recovered, "\n")
+cat("Baseline conversion rate:", round(baseline_rate, 4), "\n")
+cat("New conversion rate:", round(new_conversion_rate, 4), "\n")
+cat("Estimated improvement:", round(improvement_pct, 2), "%\n")
+
+
+
+```
+
+## More robust simulation
+
+
+
+```{r}
+#corrected
+set.seed(123)
+
+# Baseline metrics
+total_event <- nrow(model_data)
+total_abandoned <- sum(model_data$made_a_purchase == 0, na.rm = TRUE)
+total_purchased <- sum(model_data$made_a_purchase == 1, na.rm = TRUE)
+baseline_rate <- total_purchased / total_event
+
+# Recovery probabilities only for abandoned carts
+abandoned_data <- subset(model_data, made_a_purchase == 0)
+recovery_probs <- ifelse(abandoned_data$cart_value > 100, 0.15, 0.05)
+
+# Monte Carlo simulation
+n_sims <- 1000
+sim_results <- numeric(n_sims)
+
+for (i in 1:n_sims) {
+  recovered <- rbinom(length(recovery_probs), 1, recovery_probs)
+  new_purchased <- total_purchased + sum(recovered)
+  new_rate <- new_purchased / total_event
+  sim_results[i] <- (new_rate - baseline_rate) / baseline_rate * 100
+}
+
+# Summarize results
+mean_improvement <- mean(sim_results)
+ci <- quantile(sim_results, c(0.025, 0.975))
+
+cat("Expected improvement:", round(mean_improvement, 2), "%\n")
+cat("95% CI:", round(ci[1], 2), "% to", round(ci[2], 2), "%\n")
+```
+
+## Focusing on abandoned 
+
+```{r}
+# Convert ORDER_QUANTITY to numeric if needed
+model_data$ORDER_QUANTITY <- as.numeric(as.character(model_data$ORDER_QUANTITY))
+
+#convert ORDER_TYPE to factor
+model_data$ORDER_TYPE <- as.factor(model_data$ORDER_TYPE)
+
+
+```
+
+### Order_Quantity
+
+```{r}
+#Using order_quantity
+
+
+# Focus only on abandoned carts
+abandoned_data <- subset(model_data, made_a_purchase == 0)
+
+# Recovery probabilities based on quantity
+recovery_probs_quantity <- ifelse(
+  is.na(model_data$ORDER_QUANTITY), 0.05,
+  ifelse(model_data$ORDER_QUANTITY >= 3, 0.15, 0.05)
+)
+```
+
+
+```{r}
+#Using order_type
+# Focus only on abandoned carts , no londer focusing on only abandoned carts
+#abandoned_data <- subset(model_data, made_a_purchase == 0)
+
+# Recovery probabilities based on order type
+recovery_probs_type <- case_when(
+  model_data$ORDER_TYPE == "MYCOKE L" ~ 0.12,
+  model_data$ORDER_TYPE == "MYCOKE XL" ~ 0.18,
+  TRUE ~ 0.05
+)
+```
+
+
+```{r message=FALSE}
+
+#Monte Carlo Simulation
+set.seed(1234)
+n_sims <- 1000
+sim_results_quantity <- numeric(n_sims)
+
+for (i in 1:n_sims) {
+  recovered <- rbinom(length(recovery_probs_quantity), 1, recovery_probs_quantity)
+  new_purchased <- total_purchased + sum(recovered)
+  new_rate <- new_purchased / total_event
+  sim_results_quantity[i] <- (new_rate - baseline_rate) / baseline_rate * 100
+}
+
+mean_improvement <- mean(sim_results_quantity)
+ci_quantity <- quantile(sim_results_quantity, c(0.025, 0.975))
+ci_quantity
+```
+
+```{r}
+# Histogram with density overlay
+hist(sim_results_quantity,
+     breaks = 30,                     # number of bins
+     col = "lightblue",                # bar color
+     border = "white",                 # bar border
+     main = "Distribution of Simulated Improvements:Order_Quantity",
+     xlab = "Improvement (%)",
+     freq = FALSE)                     # plot probability density, not counts
+
+# Add density curve
+lines(density(sim_results_quantity),
+      col = "darkblue",
+      lwd = 2)
+
+# Add rug marks for individual values
+rug(sim_results_quantity, col = "gray")
+```
+
+### Order_Type
+
+```{r}
+#Monte Carlo Simulation ORDER_TYPE
+set.seed(1234)
+n_sims <- 1000
+sim_results_type <- numeric(n_sims)
+
+for (i in 1:n_sims) {
+  recovered <- rbinom(length(recovery_probs_type), 1, recovery_probs_type)
+  new_purchased <- total_purchased + sum(recovered)
+  new_rate <- new_purchased / total_event
+  sim_results_type[i] <- (new_rate - baseline_rate) / baseline_rate * 100
+}
+
+mean_improvement <- mean(sim_results_type)
+ci_type <- quantile(sim_results_type, c(0.025, 0.975))
+ci_type
+```
+```{r}
+# Histogram with density overlay, ORDER_TYPE
+hist(sim_results_type,
+     breaks = 30,                     # number of bins
+     col = "lightgreen",                # bar color
+     border = "white",                 # bar border
+     main = "Distribution of Simulated Improvements-Order_Type",
+     xlab = "Improvement (%)",
+     freq = FALSE)                     # plot probability density, not counts
+
+# Add density curve
+lines(density(sim_results_type),
+      col = "darkblue",
+      lwd = 2)
+
+# Add rug marks for individual values
+rug(sim_results_type, col = "gray")
+```
+
+
+
+
+
+visualization
+```{r}
+
+# Convert results list into a tidy data frame
+results_df <- do.call(rbind, lapply(results, function(x) {
+  data.frame(
+    order_type = x$order_type,
+    mean_improvement = x$mean,
+    ci_lower = x$ci[1],
+    ci_upper = x$ci[2]
+  )
+}))
+
+# Plot bar chart with error bars
+ggplot(results_df, aes(x = order_type, y = mean_improvement, fill = order_type)) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2, color = "black") +
+  labs(
+    title = "Mean Improvement by Order Type",
+    x = "Order Type",
+    y = "Mean Improvement (%)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+### Event Page Name simulation
+
+
+
+```{r}
+#Using EVENT_PAGE_NAME
+
+# Recovery probabilities based on order type
+recovery_probs_e_pagename <- case_when(
+  model_data$EVENT_PAGE_NAME == "MYCOKE L" ~ 0.12,
+  model_data$EVENT_PAGE_NAME == "MYCOKE XL" ~ 0.18,
+  TRUE ~ 0.05
+)
+```
+
+```{r}
+#Monte Carlo Simulation
+set.seed(1234)
+n_sims <- 1000
+sim_results_epn <- numeric(n_sims)
+
+for (i in 1:n_sims) {
+  recovered <- rbinom(length(recovery_probs_e_pagename), 1, recovery_probs_e_pagename)
+  new_purchased <- total_purchased + sum(recovered)
+  new_rate <- new_purchased / total_event
+  sim_results_epn[i] <- (new_rate - baseline_rate) / baseline_rate * 100
+}
+
+mean_improvement <- mean(sim_results_epn)
+ci_epn <- quantile(sim_results_epn, c(0.025, 0.975))
+ci_epn
+```
+
+```{r}
+# Histogram with density overlay
+hist(sim_results_epn,
+     breaks = 30,                     # number of bins
+     col = "orange",                # bar color
+     border = "white",                 # bar border
+     main = "Distribution of Simulated Improvements",
+     xlab = "Improvement (%)",
+     freq = FALSE)                     # plot probability density, not counts
+
+# Add density curve
+lines(density(sim_results_epn),
+      col = "darkblue",
+      lwd = 2)
+
+# Add rug marks for individual values
+rug(sim_results_epn, col = "gray")
+```
+
+```{r}
+# Calculate mean and confidence interval
+mean_improvement <- mean(sim_results)
+ci <- quantile(sim_results, c(0.025, 0.975))
+
+# Plot histogram
+hist(sim_results,
+     breaks = 30,
+     col = "lightblue",
+     border = "white",
+     main = "Distribution of Simulated Improvements",
+     xlab = "Improvement (%)",
+     freq = FALSE)
+
+# Add density curve
+lines(density(sim_results), col = "darkblue", lwd = 2)
+
+# Add rug marks
+rug(sim_results, col = "yellow")
+
+# Add vertical lines for mean and CI
+abline(v = mean_improvement, col = "red", lwd = 2, lty = 2)       # mean
+abline(v = ci[1], col = "darkgreen", lwd = 2, lty = 3)            # lower bound
+abline(v = ci[2], col = "darkgreen", lwd = 2, lty = 3)            # upper bound
+
+# Add legend
+legend("topright",
+       legend = c("Mean", "95% CI"),
+       col = c("red", "darkgreen"),
+       lty = c(2, 3),
+       lwd = 2,
+       bty = "n")
+```
+# Fixed
+
+### Device_Catecory
+
+```{r}
+counts_DC <- model_data %>%
+  count(DEVICE_CATEGORY, name = "n")
+
+# Relative multipliers (edit to taste)
+mults_DC <- c(
+  "desktop" = 1.5,
+  "tablet" = 1.1,
+  "mobile" = 0.8,
+  "not available given order type" = 1.0
+)
+
+target_avg <- 0.10  # desired overall recovery probability
+
+# Compute scaled probabilities to hit target average
+counts_DC <- counts_DC %>%
+  mutate(mult = mults_DC[DEVICE_CATEGORY]) %>%
+  mutate(weighted_mult = n * mult)
+
+scale_factor_DC <- target_avg * sum(counts_DC$n) / sum(counts_DC$weighted_mult)
+
+probs_map_DC <- counts_DC %>%
+  mutate(p = pmin(mult * scale_factor_DC, 0.95)) %>%  # cap if needed
+  select(DEVICE_CATEGORY, p)
+
+# Join to model_data
+model_data <- model_data %>%
+  left_join(probs_map_DC, by = "DEVICE_CATEGORY") %>%
+  rename(recovery_probs_dc = p)
+
+```
+
+```{r}
+set.seed(1234)
+n_sims <- 1000
+sim_results_dc <- numeric(n_sims)
+
+for (i in 1:n_sims) {
+  recovered <- rbinom(n = nrow(model_data), size = 1, prob = model_data$recovery_probs_dc)
+  new_purchased <- total_purchased + sum(recovered)
+  new_rate <- new_purchased / total_event
+  sim_results_dc[i] <- (new_rate - baseline_rate) / baseline_rate * 100
+}
+
+mean_improvement_dc <- mean(sim_results_dc)
+ci_dc <- quantile(sim_results_dc, c(0.025, 0.975))
+mean_improvement_dc
+ci_dc
+
+```
+
+```{r}
+# Histogram with density overlay
+hist(sim_results_dc,
+     breaks = 30,                     # number of bins
+     col = "pink",                # bar color
+     border = "white",                 # bar border
+     main = "Distribution of Simulated Improvements:Device Category",
+     xlab = "Improvement (%)",
+     freq = FALSE)                     # plot probability density, not counts
+
+# Add density curve
+lines(density(sim_results_dc),
+      col = "darkblue",
+      lwd = 2)
+
+# Add rug marks for individual values
+rug(sim_results_dc, col = "gray")
+```
+
+### Event Page Name
+```{r}
+counts_epn <- model_data %>%
+  count(EVENT_PAGE_NAME, name = "n")
+
+# Relative multipliers 
+mults_epn <- c(
+  "MyCoke Dashboard"                     = 1.0,
+  "MyCoke Invoices"                      = 0.8,
+  "MyCoke Orders"                        = 1.0,
+  "MyCoke Orders - Cart"                 = 1.5,
+  "MyCoke Orders - Checkout: Review Order" = 1.8,
+  "MyCoke Orders - Product: "             = 1.0,
+  "MyCoke Orders - Purchase Success"     = 2.0,
+  "MyCoke Product List - Category: "      = 1.0,
+  "not available"                        = 0.7,
+  "not available given order type"       = 0.7
+)
+
+target_avg <- 0.10  # desired overall recovery probability
+
+# Compute scaled probabilities to hit target average
+counts_epn <- counts_epn %>%
+  mutate(mult = mults_epn[EVENT_PAGE_NAME]) %>%
+  mutate(weighted_mult = n * mult)
+
+scale_factor_epn <- target_avg * sum(counts_epn$n) / sum(counts_epn$weighted_mult)
+
+probs_map_epn <- counts_epn %>%
+  mutate(p = pmin(mult * scale_factor_epn, 0.95)) %>%  # cap if needed
+  select(EVENT_PAGE_NAME, p)
+
+# Join to model_data
+model_data <- model_data %>%
+  left_join(probs_map_epn, by = "EVENT_PAGE_NAME") %>%
+  rename(recovery_probs_epn = p)
+
+```
+
+```{r}
+set.seed(1234)
+n_sims <- 1000
+sim_results_epn <- numeric(n_sims)
+
+for (i in 1:n_sims) {
+  recovered <- rbinom(n = nrow(model_data), size = 1, prob = model_data$recovery_probs_epn)
+  new_purchased <- total_purchased + sum(recovered)
+  new_rate <- new_purchased / total_event
+  sim_results_epn[i] <- (new_rate - baseline_rate) / baseline_rate * 100
+}
+
+mean_improvement_epn <- mean(sim_results_epn)
+ci_epn <- quantile(sim_results_epn, c(0.025, 0.975))
+cat("Mean Event Page Name Improvement:", round(mean_improvement_epn, 2), "%\n")
+cat("95% CI:", round(ci_epn[1], 2), "% to", round(ci_epn[2], 2), "%\n")
+```
+
+```{r}
+# Histogram with density overlay
+hist(sim_results_epn,
+     breaks = 30,                     # number of bins
+     col = "orange",                # bar color
+     border = "white",                 # bar border
+     main = "Distribution of Simulated Improvements:Event Page Name",
+     xlab = "Improvement (%)",
+     freq = FALSE)                     # plot probability density, not counts
+
+# Add density curve
+lines(density(sim_results_epn),
+      col = "darkblue",
+      lwd = 2)
+
+# Add rug marks for individual values
+rug(sim_results_epn, col = "gray")
+```
+
+
+### Order Type
+```{r}
+counts_ot <- model_data %>%
+  count(ORDER_TYPE, name = "n")
+
+# Relative multipliers for ORDER_TYPE
+mults_ot <- c(
+  "CALL CENTER"                   = 1.4, #high intent but small sample
+  "MYCOKE LEGACY"                 = 1.0,
+  "SALES REP"                     = 1.5, # high likelihood, bigger sample
+  "not available given order type"= 0.7
+)
+
+target_avg <- 0.10  # desired overall recovery probability
+
+# Compute scaled probabilities to hit target average
+counts_ot <- counts_ot %>%
+  mutate(mult = mults_ot[ORDER_TYPE]) %>%
+  mutate(weighted_mult = n * mult)
+
+scale_factor_ot <- target_avg * sum(counts_ot$n) / sum(counts_ot$weighted_mult)
+
+probs_map_ot <- counts_ot %>%
+  mutate(p = pmin(mult * scale_factor_ot, 0.95)) %>%  # cap if needed
+  select(ORDER_TYPE, p)
+
+# Join to model_data
+model_data <- model_data %>%
+  left_join(probs_map_ot, by = "ORDER_TYPE") %>%
+  rename(recovery_probs_ot = p)
+
+```
+
+```{r}
+set.seed(1234)
+n_sims <- 1000
+sim_results_ot <- numeric(n_sims)
+
+for (i in 1:n_sims) {
+  recovered <- rbinom(n = nrow(model_data), size = 1, prob = model_data$recovery_probs_ot)
+  new_purchased <- total_purchased + sum(recovered)
+  new_rate <- new_purchased / total_event
+  sim_results_ot[i] <- (new_rate - baseline_rate) / baseline_rate * 100
+}
+
+mean_improvement_ot <- mean(sim_results_ot)
+ci_ot <- quantile(sim_results_ot, c(0.025, 0.975))
+cat("Mean Order_Type Improvement:", round(mean_improvement_ot, 2), "%\n")
+cat("95% CI:", round(ci_ot[1], 2), "% to", round(ci_ot[2], 2), "%\n")
+
+```
+
+```{r}
+# Histogram with density overlay
+hist(sim_results_ot,
+     breaks = 30,                     # number of bins
+     col = "lightgreen",                # bar color
+     border = "white",                 # bar border
+     main = "Distribution of Simulated Improvements: Order Type",
+     xlab = "Improvement (%)",
+     freq = FALSE)                     # plot probability density, not counts
+
+# Add density curve
+lines(density(sim_results_ot),
+      col = "darkblue",
+      lwd = 2)
+
+# Add rug marks for individual values
+rug(sim_results_ot, col = "gray")
+```
+
+### Order Quantity
+```{r}
+counts_oq <- model_data %>%
+  count(ORDER_QUANTITY, name = "n")
+
+# Relative multipliers for ORDER_QUANTITY
+mults_oq <- c(
+  "1"  = 0.8,   # small order
+  "2"  = 1.0,   # slightly stronger
+  "3"  = 1.2,   # medium order
+  "4"  = 1.3,   # medium order
+  "6"  = 1.5,   # large order
+  "8"  = 1.6   # very large order, the NAs will be dealt with differently below
+)
+
+target_avg <- 0.10  # desired overall recovery probability
+
+# Count and assign multipliers
+counts_oq <- model_data %>%
+  count(ORDER_QUANTITY, name = "n") %>%
+  mutate(mult = mults_oq[as.character(ORDER_QUANTITY)],
+         mult = ifelse(is.na(mult), 0.7, mult),   # fallback for NA rows
+         weighted_mult = n * mult)
+
+# Compute scaled probabilities to hit target average
+counts_oq <- counts_oq %>%
+  mutate(mult = mults_oq[as.character(ORDER_QUANTITY)],
+         mult = ifelse(is.na(mult), 0.7, mult),   # fallback for NA rows
+         weighted_mult = n * mult)
+
+
+scale_factor_oq <- target_avg * sum(counts_oq$n) / sum(counts_oq$weighted_mult)
+
+probs_map_oq <- counts_oq %>%
+  mutate(p = pmin(mult * scale_factor_oq, 0.95)) %>%  # cap if needed
+  select(ORDER_QUANTITY, p)
+
+# Join to model_data
+model_data <- model_data %>%
+  left_join(probs_map_oq, by = "ORDER_QUANTITY") %>%
+  rename(recovery_probs_oq = p)
+
+```
+
+```{r}
+set.seed(1234)
+n_sims <- 1000
+sim_results_oq <- numeric(n_sims)
+
+for (i in 1:n_sims) {
+  recovered <- rbinom(n = nrow(model_data), size = 1, prob = model_data$recovery_probs_oq)
+  new_purchased <- total_purchased + sum(recovered)
+  new_rate <- new_purchased / total_event
+  sim_results_oq[i] <- (new_rate - baseline_rate) / baseline_rate * 100
+}
+
+mean_improvement_oq <- mean(sim_results_oq)
+ci_oq <- quantile(sim_results_oq, c(0.025, 0.975))
+cat("Mean Order_Type Improvement:", round(mean_improvement_oq, 2), "%\n")
+cat("95% CI:", round(ci_oq[1], 2), "% to", round(ci_oq[2], 2), "%\n")
+
+```
+
+```{r}
+# Histogram with density overlay
+hist(sim_results_oq,
+     breaks = 30,                     # number of bins
+     col = "lightblue",                # bar color
+     border = "white",                 # bar border
+     main = "Distribution of Simulated Improvements: Order Quatity",
+     xlab = "Improvement (%)",
+     freq = FALSE)                     # plot probability density, not counts
+
+# Add density curve
+lines(density(sim_results_oq),
+      col = "darkblue",
+      lwd = 2)
+
+# Add rug marks for individual values
+rug(sim_results_oq, col = "gray")
+```
+
+## Summary table
+```{r}
+# --- Build summary table of the computed simulation outputs
+summary_df <- data.frame(
+  Factor = c("DEVICE_CATEGORY", "EVENT_PAGE_NAME", "ORDER_TYPE", "ORDER_QUANTITY"),
+  Mean_Improvement = c(mean_improvement_dc, mean_improvement_epn, mean_improvement_ot, mean_improvement_oq),
+  CI_Lower = c(ci_dc[1], ci_epn[1], ci_ot[1], ci_oq[1]),
+  CI_Upper = c(ci_dc[2], ci_epn[2], ci_ot[2], ci_oq[2])
+)
+
+# Print results in a readable format
+cat("\n--- Simulation Results Summary ---\n")
+print(summary_df, row.names = FALSE)
+
+```
+
+## All plots? 
+
+```{r}
+par(mfrow = c(2, 2))
+
+# 1. Histogram with density overlay
+hist(sim_results_dc,
+     breaks = 30,                     # number of bins
+     col = "pink",                # bar color
+     border = "white",                 # bar border
+     main = "Distribution: Device Category",
+     xlab = "Improvement (%)",
+     freq = FALSE)                     # plot probability density, not counts
+
+# Add density curve
+lines(density(sim_results_dc),
+      col = "darkblue",
+      lwd = 2)
+
+# Add rug marks for individual values
+rug(sim_results_dc, col = "gray")
+
+# 2. Histogram with density overlay Event Page Name
+hist(sim_results_epn,
+     breaks = 30,                     # number of bins
+     col = "orange",                # bar color
+     border = "white",                 # bar border
+     main = "Distribution: Event Page Name",
+     xlab = "Improvement (%)",
+     freq = FALSE)                     # plot probability density, not counts
+
+# Add density curve
+lines(density(sim_results_epn),
+      col = "darkblue",
+      lwd = 2)
+
+# Add rug marks for individual values
+rug(sim_results_epn, col = "gray")
+
+# 3. Histogram with density overlay order type
+hist(sim_results_ot,
+     breaks = 30,                     # number of bins
+     col = "lightgreen",                # bar color
+     border = "white",                 # bar border
+     main = "Distribution: Order Type",
+     xlab = "Improvement (%)",
+     freq = FALSE)                     # plot probability density, not counts
+
+# Add density curve
+lines(density(sim_results_ot),
+      col = "darkblue",
+      lwd = 2)
+
+# Add rug marks for individual values
+rug(sim_results_ot, col = "gray")
+
+# 4. Histogram with density overlay order quantity
+hist(sim_results_oq,
+     breaks = 30,                     # number of bins
+     col = "lightblue",                # bar color
+     border = "white",                 # bar border
+     main = "Distribution: Order Quatity",
+     xlab = "Improvement (%)",
+     freq = FALSE)                     # plot probability density, not counts
+
+# Add density curve
+lines(density(sim_results_oq),
+      col = "darkblue",
+      lwd = 2)
+
+# Add rug marks for individual values
+rug(sim_results_oq, col = "gray")
+```
+
+# Time simulation
+```{r}
+mults_event_hour <- c(
+  "morning"   = 1.2,  # 6–11
+  "afternoon" = 1.0,  # 12–17
+  "evening"   = 0.8,  # 18–23
+  "overnight" = 0.7   # 0–5
+)
+
+model_data <- model_data %>%
+  mutate(event_hour_cat = case_when(
+    event_hour >= 6 & event_hour <= 11 ~ "morning",
+    event_hour >= 12 & event_hour <= 17 ~ "afternoon",
+    event_hour >= 18 & event_hour <= 23 ~ "evening",
+    TRUE ~ "overnight"
+  ))
+
+mults_time_gap <- c(
+  "short"  = 1.3,  # <= 2 hours
+  "medium" = 1.0,  # 3–6 hours
+  "long"   = 0.8   # > 6 hours
+)
+
+model_data <- model_data %>%
+  mutate(time_gap_cat = case_when(
+    time_gap <= 2 ~ "short",
+    time_gap <= 6 ~ "medium",
+    TRUE ~ "long"
+  ))
+
+```
+
+```{r}
+#propabilities
+counts_time <- model_data %>%
+  count(time_gap_cat, name = "n") %>%
+  mutate(mult = mults_time_gap[time_gap_cat],
+         weighted_mult = n * mult)
+
+target_avg_time <- 0.10
+scale_factor_time <- target_avg_time * sum(counts_time$n) / sum(counts_time$weighted_mult)
+
+probs_map_time <- counts_time %>%
+  mutate(recovery_probs_time = pmin(mult * scale_factor_time, 0.95)) %>%
+  select(time_gap_cat, recovery_probs_time)
+
+model_data <- model_data %>%
+  left_join(probs_map_time, by = "time_gap_cat")
+
+```
+
+```{r}
+#monte carlo simulation
+set.seed(1234)
+n_sims <- 1000
+sim_results_time <- numeric(n_sims)
+
+for (i in 1:n_sims) {
+  recovered <- rbinom(n = nrow(model_data), size = 1, prob = model_data$recovery_probs_time)
+  new_purchased <- total_purchased + sum(recovered)
+  new_rate <- new_purchased / total_event
+  sim_results_time[i] <- (new_rate - baseline_rate) / baseline_rate * 100
+}
+
+mean_improvement_time <- mean(sim_results_time)
+ci_time <- quantile(sim_results_time, c(0.025, 0.975))
+
+cat("\n--- Simulation Results (Time Gap) ---\n")
+cat("Mean Improvement:", round(mean_improvement_time, 2), "%\n")
+cat("95% CI:", round(ci_time[1], 2), "% to", round(ci_time[2], 2), "%\n")
+
+```
+```{r}
+# Histogram with density overlay time (gap between even hour and deadline hour)
+hist(sim_results_oq,
+     breaks = 30,                     # number of bins
+     col = "lavender",                # bar color
+     border = "white",                 # bar border
+     main = "Distribution: Order Quatity",
+     xlab = "Improvement (%)",
+     freq = FALSE)                     # plot probability density, not counts
+
+# Add density curve
+lines(density(sim_results_oq),
+      col = "darkblue",
+      lwd = 2)
+
+# Add rug marks for individual values
+rug(sim_results_oq, col = "gray")
+```
+
+# Updated summary table
+```{r}
+summary_df <- data.frame(
+  Factor = c("DEVICE_CATEGORY", "EVENT_PAGE_NAME", "ORDER_TYPE", "ORDER_QUANTITY", "TIME_GAP"),
+  Mean_Improvement = c(mean_improvement_dc, mean_improvement_epn, mean_improvement_ot, mean_improvement_oq, mean_improvement_time),
+  CI_Lower = c(ci_dc[1], ci_epn[1], ci_ot[1], ci_oq[1], ci_time[1]),
+  CI_Upper = c(ci_dc[2], ci_epn[2], ci_ot[2], ci_oq[2], ci_time[2])
+)
+
+cat("\n--- Simulation Results Summary ---\n")
+print(summary_df, row.names = FALSE)
+
+```
+
+# Comparison of all for segment name
+
+
+```{r}
+summarize_sim <- function(sim_vector, value_name, column_name) {
+  data.frame(
+    column = column_name,
+    value = value_name,
+    mean_improvement = mean(sim_vector),
+    ci_lower = quantile(sim_vector, 0.025),
+    ci_upper = quantile(sim_vector, 0.975)
+  )
+}
+
+results_df <- do.call(rbind, c(
+  lapply(names(mults_ot), function(opt) summarize_sim(mults_ot[[opt]], opt, "ORDER_TYPE")),
+  lapply(names(mults_DC), function(opt) summarize_sim(mults_DC[[opt]], opt, "DEVICE_CATEGORY")),
+  lapply(names(mults_epn), function(opt) summarize_sim(mults_epn[[opt]], opt, "EVENT_PAGE_NAME")),
+  lapply(names(mults_oq), function(opt) summarize_sim(mults_oq[[opt]], opt, "ORDER_QUANTITY")),
+  lapply(names(mults_oq), function(opt) summarize_sim(mults_oq[[opt]], opt, "TIME_GAP"))
+))
+
+
+# Get top 3 performers per column
+top3_per_column <- results_df %>%
+  group_by(column) %>%
+  slice_max(mean_improvement, n = 3) %>%
+  arrange(column, desc(mean_improvement)) %>%
+  ungroup()
+
+top3_per_column
+```
+
+
+
+
+
+```{r}
+top3_per_column <- top3_per_column %>%
+  mutate(label = paste(column, value, sep = ": "))
+
+
+ggplot(top3_per_column, aes(x = reorder(label, mean_improvement), 
+                            y = mean_improvement, fill = column)) +
+  geom_col(width = 0.6,show.legend = FALSE) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
+                width = 0.2, color = "black") +
+  coord_flip() +
+  labs(
+    title = "Top 3 per Column",
+    x = "Column: Option",
+    y = "Mean Improvement (%)",
+    fill = "Segment"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

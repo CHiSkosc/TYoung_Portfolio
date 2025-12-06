@@ -1,0 +1,80 @@
+---
+title: "mod_ind_v3"
+author: "Tina Young"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    toc-title: "Contents"
+    embed-resources: true
+execute:
+  include: true
+  eval: true    
+  warning: false
+  message: false
+---
+
+# libraries
+```{r}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(gt)
+library(CausalImpact)
+library(zoo)
+library(lubridate)
+```
+
+# Data
+
+```{r}
+# loading data, and copy
+z_orderwindow <- read.csv("order_windows_labeled1.csv")
+orderwindow <- z_orderwindow
+
+z_google_analytics <-read.csv("google_analytics_with_status1.csv")
+google <- z_google_analytics
+```
+
+## Data clean up
+
+Normalizing time stamps
+```{r}
+orderwindow <- orderwindow %>%
+  mutate(PREV_ORDER_BY_TIMESTAMP = ymd_hms(PREV_ORDER_BY_TIMESTAMP),
+         NEXT_ORDER_BY_TIMESTAMP = ymd_hms(NEXT_ORDER_BY_TIMESTAMP), 
+         EARLIEST_CART_TIMESTAMP = ymd_hms(EARLIEST_CART_TIMESTAMP))
+```
+
+```{r}
+# cleaning date/timestamps for google 
+google <- google %>%
+  mutate(EVENT_TIMESTAMP = ymd_hms(EVENT_TIMESTAMP),
+         PREV_ORDER_BY_TIMESTAMP = ymd_hms(PREV_ORDER_BY_TIMESTAMP), 
+         NEXT_ORDER_BY_TIMESTAMP = ymd_hms(NEXT_ORDER_BY_TIMESTAMP))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,71 @@
+---
+title: "mod_ind_v2"
+author: "Tina Young"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    toc-title: "Contents"
+    embed-resources: true
+execute:
+  include: true
+  eval: true    
+  warning: false
+  message: false
+---
+
+# libraries
+```{r}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(gt)
+library(CausalImpact)
+library(zoo)
+library(lubridate)
+```
+
+# Data
+Using data shared by group member Courtney
+```{r}
+zdata <- read.csv("final_output.csv")
+data <- zdata #copy so easier to fix if needed during cleaning process
+
+```
+
+```{r}
+summary(data)
+```
+```{r}
+sort(unique(data$EVENT_NAME))
+```
+
+```{r}
+sort(unique(data$EVENT_PAGE_NAME))
+```
+
+
+## Data cleanup
+
+```{r}
+#data clean up
+#converting date/time stamps columns from cht to proper format
+data_clean <- data %>%
+  mutate(CREATED_DATE_EST = as.Date(CREATED_DATE_EST, format = "%Y-%m-%d"), 
+         ANCHOR_DATE = as.Date(ANCHOR_DATE, format = "%Y-%m-%d"),
+         EVENT_DATE = as.Date(EVENT_DATE, format =  "%Y-%m-%d"),
+         EVENT_TIMESTAMP = ymd_hms(EVENT_TIMESTAMP)) 
+
+
+```
+
+
+
+
+# Search for the Abandoned
+The 
+
+
+
+  mutate(cart_started = EVENT_NAME %in% c("add_to_cart", "ProductAddtoCart_PLP_Clicked", "ProductAddtoCart_PDP_Clicked", "", "view_cart"))

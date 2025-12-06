@@ -1,0 +1,292 @@
+---
+title: "Modeling ind"
+author: "Tina Young"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    toc-title: "Contents"
+    embed-resources: true
+execute:
+  include: true
+  eval: true    
+  warning: false
+  message: false
+---
+
+# Libraries
+
+```{r message: FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(gt)
+library(CausalImpact)
+library(zoo)
+library(lubridate)
+```
+
+# Data
+
+```{r}
+og <- read.csv("C:\\Users\\young\\OneDrive\\Documents\\Masters\\Fall 2025\\IS6813 Capstone 3\\model work\\older data/sample_3000_combined.csv")
+data <- og
+```
+
+```{r}
+summary(og)
+head(og$CREATED_DATE_EST,20)
+```
+
+## Data clean up
+
+```{r}
+#data clean up
+#converting date/time stamps columns from chr to date type
+data_clean <- data %>%
+  mutate(EVENT_TIMESTAMP = ymd_hms(EVENT_TIMESTAMP), 
+         CREATED_DATE_EST = as.Date(CREATED_DATE_EST, format = "%Y-%m-%d"), 
+         CREATED_DATE_UTC = ymd_hms(CREATED_DATE_UTC),
+         EVENT_DATE = as.Date(EVENT_DATE, format =  "%Y-%m-%d"),
+         ORDER_QUANTITY = as.numeric(ORDER_QUANTITY)) 
+
+```
+
+```{r}
+
+#Flagging cart creation and purchase events
+
+flag_data <- data_clean %>%
+  mutate(cart_created = EVENT_NAME %in% c("add_to_cart", "update_cart", "CartProductQuantity_Cart_Changed", "UpdateCart_Cart_Retrieved"), #saying what event names for cart_created
+         purchased = ORDER_QUANTITY >0)
+```
+
+```{r}
+# Define cart life cycle flags
+data_clean <- data_clean %>%
+  mutate(
+    cart_event = EVENT_NAME %in% c("add_to_cart", "update_cart", "CartProductQuantity_Cart_Changed", "UpdateCart_Cart_Retrieved"),
+    checkout_event = EVENT_NAME %in% c("begin_checkout", "proceed_to_checkout"),
+    purchase_event = EVENT_NAME == "purchase"
+  )
+
+# Summarize per customer or session
+cart_summary <- data_clean %>%
+  group_by(CUSTOMER_ID) %>%
+  summarise(
+    cart_started = any(cart_event),
+    checkout_started = any(checkout_event),
+    purchased = any(purchase_event),
+    abandoned = if_else(cart_started & !purchased, 1, 0)
+  )
+
+```
+
+```{r}
+model_data <- data_clean %>%
+  group_by(CUSTOMER_ID) %>%
+  reframe( #used for mixed-length outputs, as summarise() was having issues with customer with multiple order lines
+    device = names(sort(table(DEVICE_CATEGORY), decreasing = TRUE))[1], # did not want to miss out on other instances the same customer had potential abandoned cart(s)
+    os = DEVICE_OPERATING_SYSTEM,
+    cart_value = sum(NSI_DEAD_NET, na.rm = TRUE),
+    volume = sum(PHYSICAL_VOLUME, na.rm = TRUE),
+    hour = hour(first(EVENT_TIMESTAMP)),
+    weekday = wday(first(EVENT_TIMESTAMP), label = TRUE),
+    abandoned = max(cart_event & !purchase_event)  # from cart event without a purchase confirmation
+  ) %>%
+  mutate(across(c(device, os, weekday), as.factor))
+
+```
+
+```{r}
+summary(model_data)
+table(model_data$abandoned)
+```
+
+# setting training/test data
+
+```{r}
+
+#setting up training and testing data 80/20
+set.seed(1234)
+
+train_index <- sample(seq_len(nrow(model_data)), size = floor(0.8*nrow(model_data)))
+
+training <- model_data[train_index, ]
+testing <- model_data[-train_index, ]
+```
+
+# overview models
+
+## Logistic Regression
+
+```{r}
+library(caret)
+#logistic regression 
+model1 <- glm(abandoned ~.,data = training, family = binomial)
+pred <- predict(model1, testing, type = "response")
+testing$pred_class <- ifelse(pred > 0.5, 1, 0)
+confusionMatrix(factor(testing$pred_class), factor(testing$abandoned))
+```
+
+## Decision Tree (CART)
+
+```{r}
+library(rpart)
+
+tree_mod1 <-rpart(abandoned ~ ., data = training, method = "class")
+pred_tree <- predict(tree_mod1, testing, type = "class")
+confusionMatrix(pred_tree, factor(testing$abandoned))
+```
+
+## Random FOrest
+
+```{r}
+training$abandoned <- as.factor(training$abandoned)
+testing$abandoned <- as.factor(testing$abandoned)
+
+```
+
+```{r}
+#random forest
+library(randomForest)
+
+rf_model1 <- randomForest(abandoned ~ ., data = training, ntree = 100)
+rf_pred1 <- predict(rf_model1, testing)
+confusionMatrix(rf_pred1, factor(testing$abandoned))
+```
+
+\*\* Suspicious with the value equalling 1
+
+## XGBoost
+
+```{r}
+library(xgboost)
+train_matrix <- model.matrix(abandoned ~ . - 1, data = training) #convert categorical variables into numeric dummy variables for the DMatrix to work
+
+#update training to have numeric for abandoned to continue xgboost
+training$abandoned <- as.numeric(as.character(training$abandoned))
+testing$abandoned <- as.numeric(as.character(testing$abandoned))
+
+
+training_matrix <- xgb.DMatrix(data = train_matrix, label = training$abandoned)
+
+#updating same for train_matrix for the testing
+test_matrix <- model.matrix(abandoned ~. -1, data = testing,
+                            contrasts.arg = attr(train_matrix, "contrats"))
+testing_matrix <- xgb.DMatrix(data = test_matrix, label = testing$abandoned)
+
+
+xgb_model <- xgboost(data = training_matrix, nrounds = 100, objective = "binary:logistic")
+xboost_pred <- predict(xgb_model, testing_matrix)
+testing$pred_class <- ifelse(pred > 0.5, 1, 0)
+confusionMatrix(factor(testing$pred_class), factor(testing$abandoned))
+```
+
+```{r}
+table(training$abandoned)
+str(training$abandoned)
+```
+
+```{r}
+library(e1071)
+
+svm_model <- svm(abandoned ~ ., data = training, kernel = "radial")
+boost_pred <- predict(svm_model, testing)
+confusionMatrix(pred, factor(testing$abandoned))
+
+```
+
+Issues getting the XGBoost and SVM models to work, continueing with models that were completed without errors.
+
+# Reduce Amandonment
+
+Baseline is 8811/16739 customers have abandoned cart(s) 52.6% during this sample data.
+
+Processing Simulate intervention
+
+```{r}
+#searching for common components of abandoned 
+
+abandoners <- model_data %>%
+  filter(abandoned == 1)
+
+purchasers <- model_data %>%
+  filter(abandoned == 0)
+```
+
+Compare the Features of the 2 groups
+
+```{r}
+ggplot(model_data, aes(x = cart_value, fill = factor(abandoned))) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Cart Value Distribution by Abandonment", fill = "Abandoned")
+```
+
+Device Type
+
+```{r}
+#device differences 
+table(model_data$device, model_data$abandoned)
+prop.table(table(model_data$device, model_data$abandoned), margin = 1)
+```
+
+Visuals
+
+```{r}
+ggplot(model_data, aes(x = device, fill = factor(abandoned))) +
+  geom_bar(position = "fill") + 
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Abandonment Rate by Device", 
+       x = "Device type", 
+       y = "proportion", 
+       fill = "Abandoned (1=yes)") +
+  theme_minimal()
+```
+
+Finding more mobile devices are used for abandonment
+
+Comparing weekday and hour for abandonment.
+
+```{r}
+#creating column that combines the weekday and hour
+
+model_data <- model_data %>%
+  mutate(weekday_hour = paste0(weekday,"-", hour))
+
+#heatmap visualization 
+
+ggplot(model_data, aes(x = hour, y = abandoned)) +
+  stat_summary(fun = mean, geom = "line") +
+  facet_wrap(~ weekday) +
+  labs(title = "Hourly Abandonment Rate by Weekday",
+       x = "Hour", y = "Abandonment Rate")
+
+```
+
+```{r}
+model_data %>%
+  group_by(weekday, hour) %>%
+  summarise(abandonment_rate = mean(abandoned),
+            cart_count = n()) %>%
+  arrange(desc(abandonment_rate))
+
+```
+
+Cart value comparisons
+
+```{r}
+table(model_data$cart_value, model_data$abandoned)
+prop.table(table(model_data$cart_value, model_data$abandoned), margin = 1)
+
+ggplot(model_data, aes(x = cart_value, fill = factor(abandoned))) +
+  geom_line() + 
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Abandonment Rate by Device", 
+       x = "Value", 
+       y = "proportion", 
+       fill = "Abandoned (1=yes)") +
+  theme_minimal()
+
+```

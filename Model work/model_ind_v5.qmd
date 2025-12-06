@@ -1,0 +1,194 @@
+---
+title: "model_ind_v5"
+author: "Tina Young"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    toc-title: "Contents"
+    embed-resources: true
+execute:
+  include: true
+  eval: true    
+  warning: false
+  message: false
+---
+
+# libraries
+```{r}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(gt)
+library(CausalImpact)
+library(zoo)
+library(lubridate)
+```
+
+# Data
+```{r}
+#using the merged file
+z_data <- read.csv("merged.csv")
+data <- z_data #copy
+```
+
+```{r}
+#data date parsing
+data_clean <- data %>%
+  mutate(
+    CREATED_DATE_EST = as.Date(CREATED_DATE_EST, format = "%Y-%m-%d"), 
+    CREATED_DATE_UTC = ymd_hms(CREATED_DATE_UTC), 
+    POSTING_DATE = as.Date(POSTING_DATE, format = "%m/%d/%Y")
+  )
+```
+
+
+```{r}
+n_distinct(data$ORDER_STATUS)
+unique(data$ORDER_STATUS)
+unique(data$ORDER_TYPE)
+
+customer_summary <- data_clean %>%
+  group_by(CUSTOMER_ID) %>%
+  summarise(
+    total_orders = n(),
+    total_volume = sum(PHYSICAL_VOLUME, na.rm = TRUE),
+    avg_profit = mean(GROSS_PROFIT_DEAD_NET, na.rm = TRUE),
+    most_recent_event = max(as.Date(CREATED_DATE_EST)),
+    most_common_office = names(sort(table(SALES_OFFICE), decreasing = TRUE))[1]
+  )
+
+```
+
+
+```{r}
+str(data_clean)
+```
+## Modeling
+
+Aggregating behaviors and features relevant to abandonment
+
+```{r}
+
+# Add weekday column
+data_clean <- data_clean %>%
+  mutate(weekday = wday(CREATED_DATE_EST, label = TRUE))
+
+# Plot abandonment rate by weekday
+data_clean %>%
+  group_by(weekday) %>%
+  summarise(
+    total = n(),
+    abandoned = sum(ORDER_STATUS == "Abandoned Cart"),
+    rate = abandoned / total
+  ) %>%
+  ggplot(aes(x = weekday, y = rate)) +
+  geom_col(fill = "#FF6F61") +
+  labs(title = "Cart Abandonment Rate by Weekday", y = "Abandonment Rate", x = "Weekday") +
+  theme_minimal()
+
+```
+
+```{r}
+data_clean %>%
+  mutate(hour = hour(CREATED_DATE_UTC)) %>%
+  group_by(hour) %>%
+  summarise(
+    total = n(),
+    abandoned = sum(ORDER_STATUS == "Abandoned Cart"),
+    rate = abandoned / total
+  ) %>%
+  ggplot(aes(x = hour, y = rate)) +
+  geom_line(color = "#FF8C00", linewidth = 1.2) +
+  labs(title = "Abandonment Rate by Hour of Day", x = "Hour", y = "Rate") +
+  theme_minimal()
+```
+
+
+```{r}
+data_clean %>%
+  group_by(PACK_TYPE_DESC) %>%
+  summarise(
+    total = n(),
+    abandoned = sum(ORDER_STATUS == "Abandoned Cart"),
+    rate = abandoned / total
+  ) %>%
+  arrange(desc(rate)) %>%
+  head(10) %>%
+  ggplot(aes(x = reorder(PACK_TYPE_DESC, rate), y = rate)) +
+  geom_col(fill = "#4682B4") +
+  coord_flip() +
+  labs(title = "Top 10 Pack Types by Abandonment Rate", x = "Pack Type", y = "Rate") +
+  theme_minimal()
+```
+
+# Identifying high risk hours
+
+```{r}
+# Add hour column
+data_clean <- data_clean %>%
+  mutate(hour = hour(CREATED_DATE_UTC))
+
+# Calculate abandonment rate by hour
+hourly_abandonment <- data_clean %>%
+  filter(ORDER_STATUS %in% c("Abandoned Cart", "Successful Order")) %>%
+  group_by(hour) %>%
+  summarise(
+    total = n(),
+    abandoned = sum(ORDER_STATUS == "Abandoned Cart"),
+    rate = abandoned / total
+  ) %>%
+  filter(rate > 0.02)  # Define high-risk threshold
+
+```
+
+Estimating total abandonment in high-risk hours
+```{r}
+high_risk_hours <- hourly_abandonment$hour
+
+abandonments_targeted <- data_clean %>%
+  filter(hour %in% high_risk_hours, ORDER_STATUS == "Abandoned Cart") %>%
+  summarise(total_abandoned = n()) %>%
+  pull(total_abandoned)
+```
+
+Simulate intervention Success
+```{r}
+#assuming an email, text or sales rep converts 10% of abandonments into purchases
+conversion_rate <- 0.10
+recovered_orders <- abandonments_targeted * conversion_rate
+```
+
+Estimate impact on overall abandonment rate
+```{r}
+total_abandoned <- sum(data_clean$ORDER_STATUS == "Abandoned Cart")
+total_events <- nrow(data_clean)
+
+new_abandonment_total <- total_abandoned - recovered_orders
+new_abandonment_rate <- new_abandonment_total / total_events
+original_rate <- total_abandoned / total_events
+reduction_pct <- (original_rate - new_abandonment_rate) / original_rate * 100
+```
+
+Final output
+```{r}
+cat("Estimated recovered orders:", recovered_orders, "\n")
+cat("Original abandonment rate:", round(original_rate, 4), "\n")
+cat("New abandonment rate:", round(new_abandonment_rate, 4), "\n")
+cat("Estimated reduction:", round(reduction_pct, 2), "%\n")
+```
+
+## output review
+
+Low impact from timing alone when just focusing on the hour(s) that the abandonment is occuring more frequently. 
+
+
+
+
+
+
+
+
+
+

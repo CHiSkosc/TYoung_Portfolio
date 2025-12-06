@@ -1,0 +1,286 @@
+---
+title: "EDA workbook1"
+author: "Tina Young"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    highlight: espresso
+    number_sections: yes
+    toc: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+This notebook is to review the data. Specifically, material.csv provided by Swire. This will show the initial findings, separate from other remaining notebooks. And even include recommendations on how to clean the data. 
+
+# Libraries and Data
+
+Libraries
+```{r libraries}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+
+library(skimr) # for summary
+library(janitor) # cleanup column names
+```
+
+Data
+```{r data loaded and copied}
+o_data <- read_csv("~/Masters/Fall 2025/IS6813 Capstone 3/data/material.csv")
+
+material <- o_data
+```
+
+
+# Data Review and Clean up
+
+## Material.csv Review and clean up
+```{r data review}
+summary(material) # all columns are currently in character class. will need to do a brief review to figure factoring
+
+# Viewed the Material_id column, and it really looks like numbers, so that's strange to me
+```
+
+```{r data material_id}
+# see number of unique IDs
+n_distinct(material$MATERIAL_ID)
+```
+
+So All of the numbers listed are distinct in the materials. Updating the column type to show. Need to confirm if has to join other tables with the character, or if also possible/easier to convert the other to be numeric
+
+```{r data material_id 2}
+#updating to numeric
+material <- material %>%
+  mutate(MATERIAL_ID = as.numeric(MATERIAL_ID))
+
+n_distinct(material$MATERIAL_ID) # still got 1252 obs. could recommend to update this column/matches to numeric
+```
+
+```{r}
+#removing column accidently created
+material <- material %>%
+  select(-Mat_num_ID)
+```
+
+```{r data remaining columns}
+# quick review of remaining columns
+material %>%
+  summarise(across(everything(), n_distinct))
+```
+
+^ This is interesting, even though the material_id is different for all lines, the combination of remaining columns are not 
+
+Per this outcome, recommending factoring the remaining columns
+
+```{r data factoring other columns}
+#factoring other columns (not the ID)
+material <- material %>%
+  mutate(across(c(PACK_TYPE_DESC, TRADE_MARK_DESC, FLAVOUR_DESC, PACK_SIZE_DESC, BEV_CAT_DESC), as.factor))
+
+summary(material)
+  
+```
+
+```{r}
+# Filter rows with any NA, show all columns
+material %>%
+  filter(if_any(everything(), is.na)) %>%
+  arrange(PACK_TYPE_DESC, TRADE_MARK_DESC, PACK_TYPE_DESC) # trade_mark_desc and flavor_desc only has 1 variable for each column Sunny Sip and Passionfruit (respectfully)
+
+```
+
+A common variable with the NA in BEV_CAT_DESC is that the Trade_mark_desc is only "Sunny Sip", and Flavour_Desc is only "Passionfruit". 
+
+```{r}
+# Review if the 2 variables above can have any affect on other parts. 
+material %>%
+  filter(FLAVOUR_DESC == "Passionfruit") #TRADE_MARK_DESC == "Sunny Sip",
+
+```
+
+^Confirmed that when filtered for the single items found to have NA in Trade_mark_desc and Flavor_desc, there were no other items listed (in the rest of the columns. That they didn't have something that wasn't "NA for bev_cat_desc)
+
+```{r}
+# Grouping for most common combination across all but Material_ID column
+mat_combo_count <- material %>%
+  count(PACK_TYPE_DESC, TRADE_MARK_DESC, FLAVOUR_DESC, PACK_SIZE_DESC, BEV_CAT_DESC)
+
+# to just see the combos totaling n > 1, which when ran totals 235 rows
+material %>%
+  count(PACK_TYPE_DESC, TRADE_MARK_DESC, FLAVOUR_DESC, PACK_SIZE_DESC, BEV_CAT_DESC) %>%
+  filter(n >1 ) %>%
+  arrange(desc(n))
+  
+
+```
+
+```{r}
+# Aluminum Can	Oliver Originals	Vanilla Latte	12 OZ CORE SPARKLING most common, looking for ID
+material %>%
+  filter(FLAVOUR_DESC == "Vanilla Latte", PACK_TYPE_DESC == "Aluminum Can", TRADE_MARK_DESC == "Oliver Originals", PACK_SIZE_DESC == "12 OZ", BEV_CAT_DESC == "CORE SPARKLING")
+```
+
+* Yes there is multiple  for the same type, that the only difference is the Material_ID. Why's that? 
+
+
+## Google analytics data
+```{r google analytics data}
+o_data_google <- read_csv("~/Masters/Fall 2025/IS6813 Capstone 3/data/google_analytics.csv")
+
+ga <- o_data_google
+```
+
+```{r}
+summary(ga)
+```
+```{r}
+# see number of unique IDs
+n_distinct(ga$CUSTOMER_ID)
+```
+
+```{r}
+#updating to numeric
+ga <- ga %>%
+  mutate(CUSTOMER_ID = as.numeric(CUSTOMER_ID))
+
+n_distinct(ga$CUSTOMER_ID) # still got 1252 obs. could recommend to update this column/matches to numeric
+```
+
+```{r}
+#factoring other columns (not the ID)
+ga <- ga %>%
+  mutate(across(c(EVENT_NAME, DEVICE_CATEGORY, DEVICE_MOBILE_BRAND_NAME, DEVICE_OPERATING_SYSTEM, EVENT_PAGE_NAME, EVENT_PAGE_TITLE, ITEMS), as.factor))
+
+summary(ga)
+```
+
+"Parse the data for the Item column? 
+
+## Orders
+```{r google analytics data}
+o_orders <- read_csv("~/Masters/Fall 2025/IS6813 Capstone 3/data/orders.csv")
+
+orders <- o_orders
+```
+
+Orders review
+```{r}
+summary(orders)
+
+orders %>%
+  summarise(across(everything(), n_distinct))
+```
+
+Clean up Orders
+```{r}
+# numeric for the Customer_id and material_id
+orders <- orders %>%
+  mutate(CUSTOMER_ID = as.numeric(CUSTOMER_ID), 
+         MATERIAL_ID = as.numeric(MATERIAL_ID), 
+         ORDER_TYPE = as.factor(ORDER_TYPE), 
+         PLANT_ID = as.factor(PLANT_ID))
+
+orders %>%
+  summarise(across(everything(), n_distinct))
+```
+
+
+
+
+## Sales
+```{r google analytics data}
+o_sales <- read_csv("~/Masters/Fall 2025/IS6813 Capstone 3/data/sales.csv")
+
+sales <- o_sales
+```
+
+Sales review
+```{r}
+summary(sales)
+
+sales %>%
+  summarise(across(everything(), n_distinct))
+
+```
+
+Updating the material_id in Sales to be numeric, the customer_id should also be numeric
+```{r}
+sales <- sales %>%
+  mutate(CUSTOMER_ID = as.numeric(CUSTOMER_ID), 
+         MATERIAL_ID = as.numeric(MATERIAL_ID), 
+         GROSS_PROFIT_DEAD_NET = as.numeric(GROSS_PROFIT_DEAD_NET))
+
+summary(sales)
+```
+
+## Reviewing all for NA
+```{r}
+# reviewing all datasets I'm working with for NAs
+# Create a named list of datasets
+data_list <- list(
+  ga = ga,
+  material = material,
+  orders = orders,
+  sales = sales
+)
+
+# Count total NAs per dataset with dataset labeling
+na_totals <- map_dfr(names(data_list), function(name) {
+  df <- data_list[[name]]
+  tibble(
+    Dataset = name,
+    Total_NAs = sum(is.na(df))
+  )
+})
+
+# View result
+print(na_totals)
+```
+
+Individual dataset review of NAs
+```{r}
+#count
+na_by_column <- function(df) {
+  tibble(
+    Variable = names(df),
+    NA_Count = sapply(df, function(x) sum(is.na(x))),
+    NA_Percent = round(sapply(df, function(x) mean(is.na(x)) * 100), 2)
+  ) %>%
+    filter(NA_Count > 0) %>%
+    arrange(desc(NA_Count))
+}
+
+na_by_column(ga)
+na_by_column(material)
+na_by_column(orders)
+na_by_column(sales)
+```
+
+Materials = 
+  BEV_CAT_DESC has 134 NAs, (10.7%)
+Orders = 
+  MATERIAL_ID has 195 (0.01%)
+  Plant_ID has 11 missing (less than 0.00)
+
+
+# Preliminary Visualizations
+
+
+```{r}
+# combine materials and sales 
+# Top 10 pack types
+material %>%
+  count(PACK_TYPE_DESC, sort = TRUE) %>%
+  slice_max(n, n = 10)
+
+# Beverage categories
+material %>%
+  count(BEV_CAT_DESC, sort = TRUE)
+
+# Flavor count
+material %>%
+  count(FLAVOUR_DESC, sort = TRUE)
+```
+
+
