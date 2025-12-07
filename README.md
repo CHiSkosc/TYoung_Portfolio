@@ -1,5 +1,12 @@
-# TYoung_Portfolio
-Data science portfolio
+# Capstone Project
+- A collaborative project that the client wanted to understand why customers were abandoning online shopping carts
+
+## Part 1: EDA work 
+*Explore Data*
+- Process clarity for the data provided, focusing on the material file. 
+- The file had distinct IDs however, when not including the IDs the remaining columns had less than 20 combinations
+- 
+
 
     
               .-                           =-.    ...
