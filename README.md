@@ -2,9 +2,9 @@ Table of Contents
 =================
 <!--ts-->
 * [Capstone III Project](#capstone-iii-project)
-     * [Part 1](#part-1:-eda-work)
-     * [Part 2](#part-2:-Modeling)
-     * [Part 3](#part-3:-Final-modeling-and-presentation)
+    * [Part 1](#part-1:-eda-work)
+    * [Part 2](#part-2:-Modeling)
+    * [Part 3](#part-3:-Final-modeling-and-presentation)
 * [Extra](#extra)
 
 # Capstone III Project
