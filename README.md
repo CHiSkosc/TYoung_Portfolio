@@ -25,7 +25,7 @@
 
 
 *Extra*
-And while I know this isn't exactly relevant to this course, but over the course of this semester and learning more about GitHub and repositories, I learned how to create and use ASCII art and thought this was fun to add to the my site. 
+And while I know this isn't exactly relevant to this course, over the course of this semester and learning more about GitHub and repositories, I learned how to create and use ASCII art and thought this was fun to add to my site. 
 
     
               .-                           =-.    ...
